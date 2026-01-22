@@ -3,6 +3,12 @@
  * Design: Bloomberg Terminal Inspired
  * Colors: 深海蓝黑背景 + 金色强调 + 明亮绿盈利色
  * Typography: IBM Plex Sans/Mono
+ * 
+ * 筛选条件：
+ * 1. 盈利金额（总利润）
+ * 2. 盈利倍数（总盈亏）
+ * 
+ * 输出格式：钱包地址:代币名称盈利钱包后3位
  */
 
 import { useState, useCallback, useMemo } from "react";
@@ -22,13 +28,15 @@ import {
   Settings2,
   CheckCircle2,
   AlertCircle,
+  DollarSign,
+  Percent,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
 interface WalletData {
   wallet: string;
-  totalProfit: number;
-  profitRatio: number;
+  totalProfit: number;      // 总利润（盈利金额）
+  profitRatio: number;      // 总盈亏（盈利倍数）
   buyCount: number;
   sellCount: number;
   buyAmount: number;
@@ -37,15 +45,15 @@ interface WalletData {
 
 interface FilteredResult {
   wallet: string;
+  totalProfit: number;
   profitRatio: number;
-  tier: "high" | "medium";
 }
 
 export default function Home() {
   const [walletData, setWalletData] = useState<WalletData[]>([]);
   const [tokenName, setTokenName] = useState("梗王");
-  const [highThreshold, setHighThreshold] = useState(10);
-  const [mediumThreshold, setMediumThreshold] = useState(5);
+  const [profitAmountThreshold, setProfitAmountThreshold] = useState(1000);  // 盈利金额阈值
+  const [profitRatioThreshold, setProfitRatioThreshold] = useState(5);       // 盈利倍数阈值
   const [fileName, setFileName] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -70,8 +78,8 @@ export default function Home() {
         for (const row of rows) {
           if (row.length >= 7 && row[0]) {
             const wallet = String(row[0]).trim();
-            const totalProfit = parseFloat(String(row[1])) || 0;
-            const profitRatio = parseFloat(String(row[2])) || 0;
+            const totalProfit = parseFloat(String(row[1])) || 0;    // 总利润
+            const profitRatio = parseFloat(String(row[2])) || 0;    // 总盈亏（盈利倍数）
             const buyCount = parseInt(String(row[3])) || 0;
             const sellCount = parseInt(String(row[4])) || 0;
             const buyAmount = parseFloat(String(row[5])) || 0;
@@ -130,35 +138,28 @@ export default function Home() {
     [parseFile]
   );
 
-  // 筛选结果
+  // 筛选结果 - 同时满足盈利金额和盈利倍数条件
   const filteredResults = useMemo(() => {
-    const highTier: FilteredResult[] = [];
-    const mediumTier: FilteredResult[] = [];
+    const results: FilteredResult[] = [];
 
     for (const item of walletData) {
-      if (item.profitRatio >= highThreshold) {
-        highTier.push({
+      // 同时满足：盈利金额 >= 阈值 AND 盈利倍数 >= 阈值
+      if (item.totalProfit >= profitAmountThreshold && item.profitRatio >= profitRatioThreshold) {
+        results.push({
           wallet: item.wallet,
+          totalProfit: item.totalProfit,
           profitRatio: item.profitRatio,
-          tier: "high",
-        });
-      } else if (item.profitRatio >= mediumThreshold) {
-        mediumTier.push({
-          wallet: item.wallet,
-          profitRatio: item.profitRatio,
-          tier: "medium",
         });
       }
     }
 
-    // 按盈利倍数降序排序
-    highTier.sort((a, b) => b.profitRatio - a.profitRatio);
-    mediumTier.sort((a, b) => b.profitRatio - a.profitRatio);
+    // 按盈利金额降序排序
+    results.sort((a, b) => b.totalProfit - a.totalProfit);
 
-    return { highTier, mediumTier };
-  }, [walletData, highThreshold, mediumThreshold]);
+    return results;
+  }, [walletData, profitAmountThreshold, profitRatioThreshold]);
 
-  // 格式化输出
+  // 格式化输出：钱包地址:代币名称盈利钱包后3位
   const formatOutput = useCallback(
     (result: FilteredResult) => {
       const walletSuffix = result.wallet.slice(-3);
@@ -167,27 +168,16 @@ export default function Home() {
     [tokenName]
   );
 
-  // 生成完整输出文本
+  // 生成完整输出文本（仅输出格式化的钱包列表）
   const generateFullOutput = useCallback(() => {
     const lines: string[] = [];
 
-    if (filteredResults.highTier.length > 0) {
-      lines.push(`=== 盈利倍数 ≥ ${highThreshold}x (${filteredResults.highTier.length}个) ===`);
-      for (const result of filteredResults.highTier) {
-        lines.push(formatOutput(result));
-      }
-    }
-
-    if (filteredResults.mediumTier.length > 0) {
-      if (lines.length > 0) lines.push("");
-      lines.push(`=== 盈利倍数 ≥ ${mediumThreshold}x (${filteredResults.mediumTier.length}个) ===`);
-      for (const result of filteredResults.mediumTier) {
-        lines.push(formatOutput(result));
-      }
+    for (const result of filteredResults) {
+      lines.push(formatOutput(result));
     }
 
     return lines.join("\n");
-  }, [filteredResults, highThreshold, mediumThreshold, formatOutput]);
+  }, [filteredResults, formatOutput]);
 
   // 复制到剪贴板
   const copyToClipboard = useCallback(async () => {
@@ -221,8 +211,6 @@ export default function Home() {
     toast.success("文件已下载");
   }, [generateFullOutput, tokenName]);
 
-  const totalFiltered = filteredResults.highTier.length + filteredResults.mediumTier.length;
-
   return (
     <div className="min-h-screen bg-background">
       {/* 顶部状态栏 */}
@@ -246,7 +234,7 @@ export default function Home() {
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary/50 border border-border">
               <TrendingUp className="w-4 h-4 text-profit" />
               <span className="text-muted-foreground">筛选:</span>
-              <span className="font-mono text-profit">{totalFiltered}</span>
+              <span className="font-mono text-profit">{filteredResults.length}</span>
             </div>
           </div>
         </div>
@@ -321,34 +309,37 @@ export default function Home() {
 
                 <Separator className="bg-border" />
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="high-threshold" className="text-sm text-muted-foreground">
-                      高倍数阈值
+                    <Label htmlFor="profit-amount" className="text-sm text-muted-foreground flex items-center gap-2">
+                      <DollarSign className="w-3.5 h-3.5 text-gold" />
+                      盈利金额阈值（总利润）
                     </Label>
                     <div className="relative">
                       <Input
-                        id="high-threshold"
+                        id="profit-amount"
                         type="number"
-                        value={highThreshold}
-                        onChange={(e) => setHighThreshold(Number(e.target.value))}
-                        min={1}
-                        className="bg-secondary/50 border-border focus:border-gold font-mono pr-8"
+                        value={profitAmountThreshold}
+                        onChange={(e) => setProfitAmountThreshold(Number(e.target.value))}
+                        min={0}
+                        className="bg-secondary/50 border-border focus:border-gold font-mono"
                       />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gold">x</span>
                     </div>
                   </div>
+
                   <div className="space-y-2">
-                    <Label htmlFor="medium-threshold" className="text-sm text-muted-foreground">
-                      中倍数阈值
+                    <Label htmlFor="profit-ratio" className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Percent className="w-3.5 h-3.5 text-profit" />
+                      盈利倍数阈值（总盈亏）
                     </Label>
                     <div className="relative">
                       <Input
-                        id="medium-threshold"
+                        id="profit-ratio"
                         type="number"
-                        value={mediumThreshold}
-                        onChange={(e) => setMediumThreshold(Number(e.target.value))}
-                        min={1}
+                        value={profitRatioThreshold}
+                        onChange={(e) => setProfitRatioThreshold(Number(e.target.value))}
+                        min={0}
+                        step={0.1}
                         className="bg-secondary/50 border-border focus:border-gold font-mono pr-8"
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-profit">x</span>
@@ -357,8 +348,9 @@ export default function Home() {
                 </div>
 
                 <div className="text-xs text-muted-foreground bg-secondary/30 rounded-md p-3">
-                  <p>• 高倍数: 盈利倍数 ≥ {highThreshold}x</p>
-                  <p>• 中倍数: {mediumThreshold}x ≤ 盈利倍数 &lt; {highThreshold}x</p>
+                  <p>筛选条件（同时满足）：</p>
+                  <p className="mt-1">• 总利润 ≥ <span className="text-gold font-mono">{profitAmountThreshold}</span></p>
+                  <p>• 盈利倍数 ≥ <span className="text-profit font-mono">{profitRatioThreshold}x</span></p>
                 </div>
               </CardContent>
             </Card>
@@ -367,7 +359,7 @@ export default function Home() {
             <div className="flex gap-3">
               <Button
                 onClick={copyToClipboard}
-                disabled={totalFiltered === 0}
+                disabled={filteredResults.length === 0}
                 className="flex-1 bg-gold hover:bg-gold/90 text-primary-foreground"
               >
                 <Copy className="w-4 h-4 mr-2" />
@@ -375,7 +367,7 @@ export default function Home() {
               </Button>
               <Button
                 onClick={downloadResults}
-                disabled={totalFiltered === 0}
+                disabled={filteredResults.length === 0}
                 variant="outline"
                 className="flex-1 border-border hover:bg-secondary hover:border-gold/50"
               >
@@ -387,75 +379,35 @@ export default function Home() {
 
           {/* 右侧结果展示 */}
           <div className="lg:col-span-8 space-y-4">
-            {/* 高倍数结果 */}
+            {/* 筛选结果 */}
             <Card className="border-border bg-card">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-base flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-gold animate-pulse" />
-                    高倍数盈利 (≥{highThreshold}x)
-                  </CardTitle>
-                  <span className="text-sm font-mono text-gold">
-                    {filteredResults.highTier.length} 个
-                  </span>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {filteredResults.highTier.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">暂无符合条件的数据</p>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-2 custom-scrollbar">
-                    {filteredResults.highTier.map((result, index) => (
-                      <div
-                        key={result.wallet}
-                        className="group flex items-center justify-between p-2.5 rounded-md bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-gold/30 transition-all"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-xs text-muted-foreground w-6 text-right font-mono">
-                            {index + 1}.
-                          </span>
-                          <code className="text-sm font-mono text-foreground truncate">
-                            {formatOutput(result)}
-                          </code>
-                        </div>
-                        <span className="text-sm font-mono text-gold font-medium shrink-0 ml-3">
-                          {result.profitRatio.toFixed(2)}x
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* 中倍数结果 */}
-            <Card className="border-border bg-card">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-profit" />
-                    中倍数盈利 ({mediumThreshold}x - {highThreshold}x)
+                    <div className="w-2 h-2 rounded-full bg-profit animate-pulse" />
+                    筛选结果
+                    <span className="text-xs text-muted-foreground font-normal">
+                      (利润≥{profitAmountThreshold} & 倍数≥{profitRatioThreshold}x)
+                    </span>
                   </CardTitle>
                   <span className="text-sm font-mono text-profit">
-                    {filteredResults.mediumTier.length} 个
+                    {filteredResults.length} 个
                   </span>
                 </div>
               </CardHeader>
               <CardContent>
-                {filteredResults.mediumTier.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                {filteredResults.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <AlertCircle className="w-10 h-10 mx-auto mb-3 opacity-50" />
                     <p className="text-sm">暂无符合条件的数据</p>
+                    <p className="text-xs mt-1">请导入数据或调整筛选参数</p>
                   </div>
                 ) : (
-                  <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-2 custom-scrollbar">
-                    {filteredResults.mediumTier.map((result, index) => (
+                  <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                    {filteredResults.map((result, index) => (
                       <div
                         key={result.wallet}
-                        className="group flex items-center justify-between p-2.5 rounded-md bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-profit/30 transition-all"
+                        className="group flex items-center justify-between p-3 rounded-md bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-profit/30 transition-all"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <span className="text-xs text-muted-foreground w-6 text-right font-mono">
@@ -465,9 +417,14 @@ export default function Home() {
                             {formatOutput(result)}
                           </code>
                         </div>
-                        <span className="text-sm font-mono text-profit font-medium shrink-0 ml-3">
-                          {result.profitRatio.toFixed(2)}x
-                        </span>
+                        <div className="flex items-center gap-4 shrink-0 ml-3">
+                          <span className="text-xs font-mono text-gold">
+                            ${result.totalProfit.toFixed(0)}
+                          </span>
+                          <span className="text-xs font-mono text-profit">
+                            {result.profitRatio.toFixed(2)}x
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -476,16 +433,16 @@ export default function Home() {
             </Card>
 
             {/* 输出预览 */}
-            {totalFiltered > 0 && (
+            {filteredResults.length > 0 && (
               <Card className="border-border bg-card">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base flex items-center gap-2">
                     <Copy className="w-4 h-4 text-muted-foreground" />
-                    输出预览
+                    输出预览（复制内容）
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <pre className="text-xs font-mono bg-background/50 rounded-md p-4 overflow-x-auto max-h-[200px] overflow-y-auto custom-scrollbar text-muted-foreground whitespace-pre-wrap break-all">
+                  <pre className="text-xs font-mono bg-background/50 rounded-md p-4 overflow-x-auto max-h-[250px] overflow-y-auto custom-scrollbar text-foreground whitespace-pre-wrap break-all">
                     {generateFullOutput()}
                   </pre>
                 </CardContent>
